@@ -1,21 +1,77 @@
 # Brain-MRI-Metastasis-Segmentation
-This dataset contains brain MR images together with manual FLAIR abnormality segmentation masks.
-The images were obtained from The Cancer Imaging Archive (TCIA).
-They correspond to 110 patients included in The Cancer Genome Atlas (TCGA) lower-grade glioma collection with at least fluid-attenuated inversion recovery (FLAIR) sequence and genomic cluster data available.
-Tumor genomic clusters and patient data is provided in `data.csv` file.
+mkdir brain_mri_segmentation
+cd brain_mri_segmentation
+python -m venv venv
+source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+pip install numpy pandas pydicom opencv-python albumentations tensorflow fastapi uvicorn streamlit
+import zipfile
+import requests
+import os
 
+url = "https://dicom5c.blob.core.windows.net/public/Data.zip"
+response = requests.get(url)
+with open("Data.zip", "wb") as f:
+    f.write(response.content)
 
-All images are provided in `.tif` format with 3 channels per image.
-For 101 cases, 3 sequences are available, i.e. pre-contrast, FLAIR, post-contrast (in this order of channels).
-For 9 cases, post-contrast sequence is missing and for 6 cases, pre-contrast sequence is missing.
-Missing sequences are replaced with FLAIR sequence to make all images 3-channel.
-Masks are binary, 1-channel images.
-They segment FLAIR abnormality present in the FLAIR sequence (available for all cases).
+with zipfile.ZipFile("Data.zip", 'r') as zip_ref:
+    zip_ref.extractall("Data")
+import cv2
 
+def apply_clahe(image):
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    return clahe.apply(image)
+import albumentations as A
 
-The dataset is organized into 110 folders named after case ID that contains information about source institution.
-Each folder contains MR images with the following naming convention:
+augmentation = A.Compose([
+    A.HorizontalFlip(),
+    A.VerticalFlip(),
+    A.RandomRotate90(),
+    A.Normalize()
+])
+from tensorflow.keras import layers, models
 
-`TCGA_<institution-code>_<patient-id>_<slice-number>.tif`
+def nested_unet(input_shape):
+    inputs = layers.Input(shape=input_shape)
+    # Build your Nested U-Net architecture here
+    return models.Model(inputs, outputs)
+def attention_unet(input_shape):
+    inputs = layers.Input(shape=input_shape)
+    # Build your Attention U-Net architecture here
+    return models.Model(inputs, outputs)
+model_nu = nested_unet(input_shape=(256, 256, 1))
+model_nu.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-Corresponding masks have a `_mask` suffix.
+model_au = attention_unet(input_shape=(256, 256, 1))
+model_au.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+history_nu = model_nu.fit(train_data, train_labels, validation_split=0.2, epochs=50)
+model_nu.save("nested_unet_weights.h5")
+
+history_au = model_au.fit(train_data, train_labels, validation_split=0.2, epochs=50)
+model_au.save("attention_unet_weights.h5")
+def dice_score(y_true, y_pred):
+    smooth = 1e-6
+    intersection = np.sum(y_true * y_pred)
+    return (2. * intersection + smooth) / (np.sum(y_true) + np.sum(y_pred) + smooth)
+
+# Evaluate and compare DICE scores
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+
+@app.post("/predict/")
+async def predict(file: UploadFile = File(...)):
+    # Load and process image, then return prediction
+    return JSONResponse(content={"result": "segmentation mask"})
+import streamlit as st
+
+st.title("Brain MRI Metastasis Segmentation")
+uploaded_file = st.file_uploader("Choose a file", type=["jpg", "png", "dicom"])
+if uploaded_file:
+    # Process the uploaded file and display results
+    st.image("segmentation_mask.png", caption="Segmentation Result")
+git init
+git add .
+git commit -m "Initial commit"
+git remote add origin <your-repo-url>
+git push -u origin master
